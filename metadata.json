@@ -2,5 +2,7 @@
   "name": "MathTasks Studio",
   "description": "Середовище аналізу Java-коду, виправлення синтаксичних помилок, тестування та генерації шкільних математичних задач мовою Mathpar для репозиторію mathpar/mathTasks.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
