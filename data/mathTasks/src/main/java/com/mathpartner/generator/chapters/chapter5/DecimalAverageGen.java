@@ -1,81 +1,75 @@
 package com.mathpartner.generator.chapters.chapter5;
 
 import com.mathpartner.generator.model.Task;
-import java.util.Locale;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Random;
 
+/**
+ * Генератор задач на середнє арифметичне та середню швидкість руху.
+ */
 public class DecimalAverageGen {
-    private final Random random = new Random();
+  private final Random random = new Random();
 
-    /**
-     * Генерує задачу на середнє арифметичне або середню швидкість руху
-     * @param taskId Порядковий номер задачі ("01")
-     */
-    public Task generateTask(String taskId) {
-        int type = random.nextInt(2);
+  public Task generateTask(String taskId) {
+    int type = random.nextInt(2);
 
-        if (type == 0) {
-            // Тип 0: Середнє арифметичне трьох чисел
-            double n1 = 5.2 + random.nextInt(5);
-            double n2 = 6.4 + random.nextInt(4);
-            double n3 = 7.3 + random.nextInt(6);
-            
-            double sum = n1 + n2 + n3;
-            double avg = sum / 3.0;
+    if (type == 0) {
+      // Гарантуємо, що сума ділиться на 3 без періодичного хвоста
+      int k1 = 50 + random.nextInt(40);
+      int k2 = 60 + random.nextInt(40);
+      int rem = (k1 + k2) % 3;
+      int k3 = 70 + random.nextInt(40);
+      k3 += (3 - ((rem + k3) % 3)) % 3;
 
-            // Визначаємо точну кількість знаків після коми для відповіді
-            String answer = String.format(Locale.US, "%.2f", avg);
-            // Якщо число закінчується на нуль, можна використовувати TASK-D1, інакше TASK-D2
-            String taskType = answer.endsWith("0") ? "TASK-D1" : "TASK-D2";
-            if (taskType.equals("TASK-D1")) {
-                answer = String.format(Locale.US, "%.1f", avg);
-            }
+      BigDecimal n1 = BigDecimal.valueOf(k1, 1);
+      BigDecimal n2 = BigDecimal.valueOf(k2, 1);
+      BigDecimal n3 = BigDecimal.valueOf(k3, 1);
+      BigDecimal sum = n1.add(n2).add(n3);
+      BigDecimal avg = sum.divide(BigDecimal.valueOf(3), 1, RoundingMode.UNNECESSARY);
 
-            String condition = String.format(Locale.US, "Знайдіть середнє арифметичне трьох чисел:\n%.1f, %.1f та %.1f.", n1, n2, n3);
+      String answer = avg.toPlainString();
+      String condition =
+          String.format(
+              "Знайдіть середнє арифметичне трьох чисел: %s, %s та %s.",
+              n1.toPlainString(), n2.toPlainString(), n3.toPlainString());
 
-            Task task = new Task(taskId, taskType, condition, answer);
-            task.addTextStep("Щоб знайти середнє арифметичне кількох чисел, потрібно їхню суму поділити на їхню кількість.");
-            task.addTextStep("Знайдемо суму заданих чисел:");
-            task.addTextStep(String.format(Locale.US, "%.1f + %.1f + %.1f = %.1f", n1, n2, n3, sum));
-            task.addTextStep("Тепер поділимо отриману суму на 3:");
-            task.addTextStep(String.format(Locale.US, "%.1f / 3 = %s", sum, answer));
-            return task;
+      Task task = new Task(taskId, "TASK-D1", condition, answer);
+      task.addTextStep("Знайдемо суму заданих чисел:");
+      task.addFormulaStep(
+          String.format("%s + %s + %s = %s", n1.toPlainString(), n2.toPlainString(), n3.toPlainString(), sum.toPlainString()));
+      task.addTextStep("Поділимо отриману суму на 3:");
+      task.addFormulaStep(String.format("%s / 3 = %s", sum.toPlainString(), answer));
+      return task;
+    } else {
+      int t1 = 2;
+      int t2 = 3;
+      int totalTime = t1 + t2;
 
-        } else {
-            // Тип 1: Середня швидкість руху катера чи автомобіля (гарантуємо красивий результат)
-            int t1 = 2; // час першої ділянки (години)
-            int t2 = 3; // час другої ділянки (години)
-            int totalTime = t1 + t2; // 5 годин
+      int v1 = 60 + random.nextInt(5) * 4;
+      int v2 = 70 + random.nextInt(5) * 4;
 
-            int v1 = 60 + random.nextInt(5) * 4; // наприклад, 60, 64, 68...
-            int v2 = 70 + random.nextInt(5) * 4; // наприклад, 70, 74, 78...
+      int s1 = v1 * t1;
+      int s2 = v2 * t2;
+      int totalDistance = s1 + s2;
 
-            int s1 = v1 * t1;
-            int s2 = v2 * t2;
-            int totalDistance = s1 + s2;
-            
-            double avgSpeed = (double) totalDistance / totalTime;
-            String answer = String.format(Locale.US, "%.1f", avgSpeed);
-            String taskType = answer.endsWith(".0") ? "TASK-D0" : "TASK-D1";
-            if (taskType.equals("TASK-D0")) {
-                answer = String.format(Locale.US, "%.0f", avgSpeed);
-            }
+      BigDecimal avgSpeed =
+          BigDecimal.valueOf(totalDistance).divide(BigDecimal.valueOf(totalTime), 1, RoundingMode.HALF_UP);
+      boolean exactInt = avgSpeed.stripTrailingZeros().scale() <= 0;
+      String answer = exactInt ? avgSpeed.toBigInteger().toString() : avgSpeed.toPlainString();
+      String taskType = exactInt ? "TASK-D0" : "TASK-D1";
 
-            String condition = String.format("Автомобіль рухався %d год зі швидкістю %d км/год\n" +
-                    "і %d god зі швидкістю %d км/год. Знайдіть середню швидкість руху автомобіля.", t1, v1, t2, v2);
+      String condition =
+          String.format(
+              "Автомобіль рухався %d год зі швидкістю %d км/год і %d год зі швидкістю %d км/год. Знайдіть середню швидкість руху автомобіля.",
+              t1, v1, t2, v2);
 
-            Task task = new Task(taskId, taskType, condition, answer);
-            task.addTextStep("Щоб знайти середню швидкість руху, потрібно весь пройдений шлях поділити на весь час у дорозі.");
-            task.addTextStep("Обчислимо відстань першої та другої ділянки маршруту:");
-            task.addTextStep(String.format("%d * %d = %d", v1, t1, s1));
-            task.addTextStep(String.format("%d * %d = %d", v2, t2, s2));
-            task.addTextStep("Знайдемо загальний шлях та загальний час:");
-            task.addTextStep(String.format("%d + %d = %d", s1, s2, totalDistance));
-            task.addTextStep(String.format("%d + %d = %d", t1, t2, totalTime));
-            task.addTextStep("Поділимо весь шлях на весь час для обчислення середньої швидкості:");
-            task.addTextStep(String.format(Locale.US, "%d / %d = %s", totalDistance, totalTime, answer));
-            return task;
-        }
+      Task task = new Task(taskId, taskType, condition, answer);
+      task.addTextStep("Обчислимо весь пройдений шлях та весь час:");
+      task.addFormulaStep(String.format("%d * %d + %d * %d = %d", v1, t1, v2, t2, totalDistance));
+      task.addTextStep("Поділимо весь шлях на загальний час:");
+      task.addFormulaStep(String.format("%d / %d = %s", totalDistance, totalTime, answer));
+      return task;
     }
+  }
 }
- 

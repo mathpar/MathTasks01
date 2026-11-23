@@ -1,46 +1,44 @@
-/* 
-1. Клас DecimalArithmeticGen.java
-Генерує арифметичні завдання з динамічним налаштуванням точності TASK-D2 та TASK-D4.
-*/
-
 package com.mathpartner.generator.chapters.chapter5;
 
 import com.mathpartner.generator.model.Task;
-import java.util.Locale;
+import java.math.BigDecimal;
 import java.util.Random;
 
+/**
+ * Генератор арифметики десяткових дробів із використанням BigDecimal.
+ */
 public class DecimalArithmeticGen {
-    private final Random random = new Random();
+  private final Random random = new Random();
 
-    public Task generateTask(String taskId) {
-        int type = random.nextInt(2);
-        
-        if (type == 0) {
-            // Додавання десяткових дробів з точністю 2 знаки (TASK-D2)
-            double a = 1.5 + random.nextInt(5) + (random.nextInt(10) / 10.0);
-            double b = 2.1 + random.nextInt(4) + (random.nextInt(10) / 10.0);
-            double res = a + b;
+  public Task generateTask(String taskId) {
+    int type = random.nextInt(2);
 
-            String condition = String.format(Locale.US, "Обчисліть значення виразу:\n%.1f + %.1f = ?", a, b);
-            String answer = String.format(Locale.US, "%.2f", res);
+    if (type == 0) {
+      BigDecimal a = BigDecimal.valueOf(15 + random.nextInt(60), 1);
+      BigDecimal b = BigDecimal.valueOf(21 + random.nextInt(50), 1);
+      BigDecimal res = a.add(b);
 
-            Task task = new Task(taskId, "TASK-D2", condition, answer);
-            task.addTextStep("Виконаємо додавання десяткових дробів, підписуючи розряд під розрядом:");
-            task.addTextStep(String.format(Locale.US, "%.1f + %.1f = %.1f", a, b, res));
-            return task;
-        } else {
-            // Множення десяткових дробів з точністю 4 знаки (TASK-D4)
-            double a = 0.12 + (random.nextInt(5) / 100.0);
-            double b = 0.3 + (random.nextInt(3) / 10.0);
-            double res = a * b;
+      String condition =
+          String.format("Обчисліть значення виразу: %s + %s = ?", a.toPlainString(), b.toPlainString());
+      String answer = res.toPlainString();
 
-            String condition = String.format(Locale.US, "Обчисліть добуток дійсних чисел:\n%.2f * %.1f = ?", a, b);
-            String answer = String.format(Locale.US, "%.4f", res);
+      Task task = new Task(taskId, "TASK-D1", condition, answer);
+      task.addTextStep("Виконаємо додавання десяткових дробів, підписуючи розряд під розрядом:");
+      task.addFormulaStep(String.format("%s + %s = %s", a.toPlainString(), b.toPlainString(), answer));
+      return task;
+    } else {
+      BigDecimal a = BigDecimal.valueOf(12 + random.nextInt(15), 2);
+      BigDecimal b = BigDecimal.valueOf(3 + random.nextInt(5), 1);
+      BigDecimal res = a.multiply(b);
 
-            Task task = new Task(taskId, "TASK-D4", condition, answer);
-            task.addTextStep("Перемножимо числа, не звертаючи уваги на коми, а потім відокремимо справа стільки знаків, скільки їх в обох множниках разом:");
-            task.addTextStep(String.format(Locale.US, "%.2f * %.1f = %.4f", a, b, res));
-            return task;
-        }
+      String condition =
+          String.format("Обчисліть добуток десяткових дробів: %s * %s = ?", a.toPlainString(), b.toPlainString());
+      String answer = res.toPlainString();
+
+      Task task = new Task(taskId, "TASK-D3", condition, answer);
+      task.addTextStep("Перемножимо числа і відокремимо справа сумарну кількість знаків після коми:");
+      task.addFormulaStep(String.format("%s * %s = %s", a.toPlainString(), b.toPlainString(), answer));
+      return task;
     }
+  }
 }
