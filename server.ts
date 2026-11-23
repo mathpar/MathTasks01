@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { analyzeFile, analyzeRepository } from './server/javaAnalyzer.ts';
 import { generateAssignmentPreview, runTestSuite } from './server/mathparSimulator.ts';
 import { PATCHED_FILES, applyAllPatches, applyPatchForFile } from './server/patchEngine.ts';
+import { buildZipBuffer, type ZipEntryInput } from './server/zipBuilder.ts';
 import {
   ORIGINAL_REPO_DIR,
   WORK_REPO_DIR,
@@ -191,6 +193,105 @@ async function startServer() {
       res.json(preview);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : 'Помилка генерації завдання' });
+    }
+  });
+
+  // 6b. Export all generated Mathpar .txt files (whole course or single section) as a .zip archive
+  app.get('/api/export/tasks.zip', (req, res) => {
+    try {
+      ensureWorkingRepo();
+      const scope = req.query.scope === 'section' ? 'section' : 'all';
+      const sectionId = String(req.query.sectionId ?? '');
+      const mode = req.query.mode === 'original' ? 'original' : 'working';
+      const seedOffset = Number(req.query.seedOffset ?? 0) || 0;
+      const repoDir = mode === 'original' ? ORIGINAL_REPO_DIR : WORK_REPO_DIR;
+      const chapters = parseCoursePlan(repoDir);
+
+      const entries: ZipEntryInput[] = [];
+      const manifestLines: string[] = [
+        'MathTasks 5 клас — Експорт згенерованих файлів Mathpar',
+        `Режим: ${mode === 'working' ? 'виправлений (working)' : 'оригінал GitHub'}`,
+        '',
+      ];
+
+      let globalIdx = 0;
+      let totalFiles = 0;
+
+      for (const ch of chapters) {
+        for (const sec of ch.sections) {
+          if (!sec.implemented) {
+            globalIdx += sec.taskCount;
+            if (scope === 'all') {
+              manifestLines.push(`[ПРОПУЩЕНО] Розділ ${sec.id} (${sec.title}) — генератор ще не реалізовано`);
+            }
+            continue;
+          }
+
+          if (scope === 'section' && sec.id !== sectionId) {
+            globalIdx += sec.taskCount;
+            continue;
+          }
+
+          let secFiles = 0;
+          for (let k = 0; k < sec.taskCount; k++) {
+            globalIdx++;
+            const weekNumber = Math.floor((globalIdx - 1) / 8) + 1;
+            const assignmentNumber = ((globalIdx - 1) % 8) + 1;
+            const preview = generateAssignmentPreview(sec.id, weekNumber, assignmentNumber, mode, seedOffset);
+            const entryPath =
+              scope === 'section'
+                ? preview.fileName
+                : `${ch.id}/section_${sec.id}/${preview.fileName}`;
+            entries.push({ name: entryPath, content: preview.fullMathparText });
+            secFiles++;
+            totalFiles++;
+          }
+
+          manifestLines.push(
+            `[OK] Розділ ${sec.id} (${sec.title}) — ${secFiles} файлів (${secFiles * 10} задач)`
+          );
+        }
+      }
+
+      if (entries.length === 0) {
+        res.status(404).json({ error: 'Не знайдено реалізованих завдань для експорту.' });
+        return;
+      }
+
+      manifestLines.push('', `Разом файлів: ${totalFiles} (${totalFiles * 10} задач)`);
+      entries.unshift({ name: 'README_manifest.txt', content: manifestLines.join('\n') + '\n' });
+
+      const zipBuf = buildZipBuffer(entries);
+      const fileName =
+        scope === 'section'
+          ? `mathTasks-section-${sectionId.replace(/[^a-zA-Z0-9._-]/g, '_')}.zip`
+          : `mathTasks-5klass-${mode}.zip`;
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', String(zipBuf.length));
+      res.send(zipBuf);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'Помилка експорту ZIP' });
+    }
+  });
+
+  // 6c. Export entire patched Java repository as a .zip archive
+  app.get('/api/export/repo.zip', (_req, res) => {
+    try {
+      ensureWorkingRepo();
+      const files = listAllRepoFiles(WORK_REPO_DIR);
+      const entries: ZipEntryInput[] = files.map((rel) => ({
+        name: `mathTasks-work/${rel}`,
+        content: fs.readFileSync(path.join(WORK_REPO_DIR, rel)),
+      }));
+      const zipBuf = buildZipBuffer(entries);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', 'attachment; filename="mathTasks-java-patched.zip"');
+      res.setHeader('Content-Length', String(zipBuf.length));
+      res.send(zipBuf);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'Помилка експорту репозиторію' });
     }
   });
 

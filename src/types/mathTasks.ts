@@ -83,6 +83,7 @@ export interface GeneratedTaskItem {
   taskId: string;
   taskType: string;
   conditionText: string;
+  conditionMath?: string;
   solutionSteps: Array<{ content: string; isText: boolean }>;
   finalAnswer: string;
   rawBlock: string;

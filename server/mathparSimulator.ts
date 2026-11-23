@@ -42,42 +42,75 @@ class SeededRandom {
   }
 }
 
+function normalizeConditionForQuestionEnd(conditionText: string): string {
+  const stripped = conditionText.trim().replace(/[.?""\s]+$/, '');
+  return stripped.endsWith('=') ? `${stripped} ` : stripped;
+}
+
 function renderTaskBlock(
   taskId: string,
   taskType: string,
   conditionText: string,
   steps: Array<{ content: string; isText: boolean }>,
   finalAnswer: string,
-  brokenRenderer: boolean
+  brokenRenderer: boolean,
+  conditionMath?: string
 ): string {
   const lines: string[] = [];
-  lines.push('===');
-  lines.push(`"${taskType} ${taskId}. ${conditionText}"`);
-  lines.push('---');
-  lines.push('?');
-  lines.push('===');
 
   if (brokenRenderer) {
+    lines.push('===');
+    lines.push(`"${taskType} ${taskId}. ${conditionText}"`);
+    lines.push('---');
+    lines.push('?');
+    lines.push('===');
     lines.push(`"_ Рішення ${taskId}.`);
     for (const st of steps) {
       lines.push(st.content);
     }
     lines.push('"');
+    lines.push('---');
+    lines.push(finalAnswer);
   } else {
-    lines.push(`_ "Рішення ${taskId}."`);
-    for (let i = 0; i < steps.length; i++) {
+    lines.push('"==="');
+    if (conditionMath && conditionMath.trim().length > 0) {
+      const textPart = conditionText.trim().replace(/[?""\s]+$/, '');
+      lines.push(`"${taskType} ${taskId}. ${textPart} "`);
+      const mathCond = conditionMath.replace(/\s+$/, '');
+      lines.push(mathCond.endsWith('?') ? mathCond : `${mathCond}?`);
+    } else {
+      const cleanCondition = normalizeConditionForQuestionEnd(conditionText);
+      lines.push(`"${taskType} ${taskId}. ${cleanCondition}"?`);
+    }
+    lines.push('"---"');
+    lines.push('?');
+    lines.push('"==="');
+
+    let startIdx = 0;
+    if (steps.length > 0 && steps[0].isText) {
+      lines.push(`"_ Рішення ${taskId}.\n  ${steps[0].content.trim()}"`);
+      startIdx = 1;
+    } else {
+      lines.push(`"_ Рішення ${taskId}."`);
+    }
+
+    for (let i = startIdx; i < steps.length; i++) {
       const st = steps[i];
       if (st.isText) {
-        lines.push(`  "${st.content}"`);
+        lines.push(`  "${st.content.trim()}"`);
       } else {
         const isLast = i === steps.length - 1;
-        const clean = st.content.replace(/;\s*$/, '');
-        lines.push(`  ${clean}${isLast ? '' : ';'}`);
+        const clean = st.content.replace(/[;\s]+$/, '');
+        if (clean.includes('\n')) {
+          lines.push(`${clean}${isLast ? '' : ';'}`);
+        } else {
+          lines.push(`  ${clean.trim()}${isLast ? '' : ';'}`);
+        }
       }
     }
+    lines.push('"---"');
+    lines.push(finalAnswer);
   }
-  lines.push('---');
-  lines.push(finalAnswer);
   return lines.join('\n');
 }
 
@@ -92,7 +125,18 @@ function validateTaskMathpar(item: Omit<GeneratedTaskItem, 'syntaxValid' | 'vali
   if (/[\s\n]god[\s.,]/.test(item.conditionText)) {
     notes.push('Виявлено описку "god" замість "год"');
   }
-  if (item.rawBlock.includes('"_ Рішення ') && !item.rawBlock.includes('_ "Рішення ')) {
+  const blockLines = item.rawBlock.split('\n');
+  const firstDashIdx = blockLines.indexOf('"---"');
+  const lastConditionLine = firstDashIdx > 0 ? blockLines[firstDashIdx - 1] : (blockLines[1] ?? '');
+  if (!lastConditionLine.endsWith('?') || /\?"/.test(lastConditionLine)) {
+    notes.push('Умова задачі має закінчуватися символом ? без подвійної лапки після нього');
+  }
+  if (blockLines.some((l) => l === '===' || l === '---' || l.startsWith('_ "'))) {
+    notes.push('Службові рядки повинні бути в лапках: "===", "---", "_ "');
+  }
+  const solHeaderIdx = blockLines.findIndex((l) => l.startsWith(`"_ Рішення ${item.taskId}.`));
+  const lastQuoteLineAfterSol = blockLines.slice(solHeaderIdx + 1).findIndex((l) => l === '"');
+  if (solHeaderIdx === -1 || lastQuoteLineAfterSol !== -1) {
     notes.push('Блок розв’язку відкрито як єдиний рядок у лапках — формули не обчислюються в Mathpar');
   }
   if (item.conditionText.includes('com.mathpartner.generator.model.Task@')) {
@@ -107,6 +151,103 @@ function validateTaskMathpar(item: Omit<GeneratedTaskItem, 'syntaxValid' | 'vali
   };
 }
 
+function buildColumnMultiplication(m1: number, m2: number, conditionOnly: boolean): string {
+  const m1Str = String(m1);
+  const m2Str = String(m2);
+  const resStr = String(m1 * m2);
+
+  const partialRows: Array<{ shift: number; valStr: string }> = [];
+  for (let k = 0; k < m2Str.length; k++) {
+    const digit = Number(m2Str[m2Str.length - 1 - k]);
+    partialRows.push({ shift: k, valStr: String(m1 * digit) });
+  }
+
+  let minLeftRel = Math.min(-(m1Str.length - 1), -(m2Str.length - 1), -(resStr.length - 1));
+  for (let idx = 0; idx < partialRows.length; idx++) {
+    const row = partialRows[idx];
+    const left = -(row.shift + row.valStr.length - 1) - (idx > 0 ? 1 : 0);
+    if (left < minLeftRel) minLeftRel = left;
+  }
+
+  const starCol = 4;
+  const starRel = minLeftRel - 1;
+  const onesCol = starCol - starRel;
+
+  const lines: string[] = [];
+  const m1Start = onesCol - (m1Str.length - 1);
+  lines.push(' '.repeat(m1Start) + m1Str);
+
+  const m2Start = onesCol - (m2Str.length - 1);
+  const multLine = ' '.repeat(starCol) + '*' + ' '.repeat(Math.max(1, m2Start - starCol - 1)) + m2Str + '=';
+  if (conditionOnly) {
+    lines.push(`${multLine} ?`);
+    return lines.join('\n');
+  }
+  lines.push(multLine);
+
+  if (partialRows.length > 1) {
+    for (let idx = 0; idx < partialRows.length; idx++) {
+      const row = partialRows[idx];
+      const pEndCol = onesCol - row.shift;
+      const pStartCol = pEndCol - (row.valStr.length - 1);
+      if (idx === 0) {
+        lines.push(' '.repeat(pStartCol) + row.valStr);
+      } else {
+        const isLastPartial = idx === partialRows.length - 1;
+        let rowStr = ' '.repeat(pStartCol - 1) + '+' + row.valStr;
+        if (isLastPartial) {
+          rowStr += ' '.repeat(Math.max(1, onesCol + 1 - (pEndCol + 1))) + '=';
+        }
+        lines.push(rowStr);
+      }
+    }
+  }
+
+  const resStart = onesCol - (resStr.length - 1);
+  lines.push(' '.repeat(resStart) + resStr);
+  return lines.join('\n');
+}
+
+function buildColumnDivision(dividend: number, divisor: number): string {
+  const digits = String(dividend);
+  const divisorStr = String(divisor);
+  const baseCol = 4;
+  const qCol = baseCol + digits.length + divisorStr.length + 1;
+
+  const lines: string[] = [];
+  lines.push(' '.repeat(baseCol) + digits + '/' + divisorStr + '=');
+
+  let cur = 0;
+  let started = false;
+  for (let i = 0; i < digits.length; i++) {
+    cur = cur * 10 + Number(digits[i]);
+    if (!started && cur < divisor && i < digits.length - 1) continue;
+    const curEndCol = baseCol + i;
+    if (started) {
+      const curStr = String(cur);
+      const curStartCol = curEndCol - curStr.length + 1;
+      lines.push(' '.repeat(Math.max(0, curStartCol - 2)) + '= ' + curStr);
+    }
+    started = true;
+
+    const qDigit = Math.floor(cur / divisor);
+    const product = qDigit * divisor;
+    const prodStr = String(product);
+    const prodStartCol = curEndCol - prodStr.length + 1;
+    const leftSub = ' '.repeat(Math.max(0, prodStartCol - 2)) + '- ' + prodStr;
+    const padToQ = Math.max(1, qCol - 1 - leftSub.length);
+    lines.push(leftSub + ' '.repeat(padToQ) + `(${qDigit})`);
+    cur = cur - product;
+  }
+
+  const remStr = String(cur);
+  const remEndCol = baseCol + digits.length - 1;
+  const remStartCol = remEndCol - remStr.length + 1;
+  lines.push(' '.repeat(Math.max(0, remStartCol - 2)) + '= ' + remStr);
+
+  return lines.join('\n');
+}
+
 export function generateAssignmentPreview(
   sectionId: string,
   weekNumber: number,
@@ -116,7 +257,12 @@ export function generateAssignmentPreview(
 ): GeneratedAssignmentPreview {
   const repoDir = mode === 'original' ? ORIGINAL_REPO_DIR : WORK_REPO_DIR;
   const rendererSrc = readRepoFile(repoDir, 'src/main/java/com/mathpartner/generator/engine/MathparRenderer.java') ?? '';
-  const brokenRenderer = rendererSrc.includes('"_ Рішення ') && !rendererSrc.includes('step.isText()');
+  const brokenRenderer =
+    !rendererSrc.includes('step.isText()') ||
+    !rendererSrc.includes(String.raw`\"===\"`) ||
+    !rendererSrc.includes(String.raw`\"---\"`) ||
+    !rendererSrc.includes(String.raw`\"_ Рішення `) ||
+    !rendererSrc.includes(String.raw`\"?\n`);
 
   const workSrc = readRepoFile(repoDir, 'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter16WorkGenerator.java') ?? '';
   const brokenWork = workSrc.includes('task.textUa = String.format("TASK-');
@@ -157,39 +303,64 @@ export function generateAssignmentPreview(
     const taskId = String(i).padStart(2, '0');
     let taskType = 'TASK-Z';
     let conditionText = '';
+    let conditionMath: string | undefined;
     let steps: Array<{ content: string; isText: boolean }> = [];
     let finalAnswer = '';
 
     if (sectionId === '1.3') {
-      if (i % 2 === 1) {
+      const slot = (i - 1) % 3;
+      if (slot === 0) {
+        // ColumnMultiplicationGenerator: точне вирівнювання розрядів у стовпчик
         const m1 = 120 + rng.nextInt(780);
-        const m2 = 14 + rng.nextInt(75);
+        const dTens = 1 + rng.nextInt(8);
+        const dOnes = 1 + rng.nextInt(9);
+        const m2 = dTens * 10 + dOnes;
         const prod = m1 * m2;
-        conditionText = `Обчисліть множення у стовпчик: ${m1} * ${m2} = ?`;
+
+        conditionText = 'Обчисліть множення у стовпчик:';
+        conditionMath = buildColumnMultiplication(m1, m2, true);
         steps = [
           { content: 'Виконаємо множення розряд за розрядом у стовпчик:', isText: true },
-          { content: `${m1} * ${m2} = ${prod}`, isText: false },
+          { content: buildColumnMultiplication(m1, m2, false), isText: false },
         ];
         finalAnswer = String(prod);
       } else {
+        // ColumnDivisionGenerator: окремі задачі на пошук цілої та дробової частин
         const divisor = 6 + rng.nextInt(18);
-        const dividend = 115 + rng.nextInt(650);
+        let dividend = 115 + rng.nextInt(650);
+        if (dividend % divisor === 0) {
+          dividend += 1 + rng.nextInt(divisor - 1);
+        }
         const q = Math.floor(dividend / divisor);
         const r = dividend % divisor;
-        if (r === 0) {
-          conditionText = `Обчисліть ділення куточком: ${dividend} / ${divisor} = ?`;
-          steps = [{ content: `${dividend} / ${divisor} = ${q}`, isText: false }];
+        const divBlock = buildColumnDivision(dividend, divisor);
+        conditionMath = `    ${dividend}/${divisor} =?`;
+
+        if (slot === 1) {
+          // Окрема задача: пошук цілої частини частки (TASK-Z)
+          taskType = 'TASK-Z';
+          conditionText = 'Знайдіть цілу частину частки від ділення';
           finalAnswer = String(q);
+          steps = [
+            { content: `Виконаємо ділення куточком ${dividend} на ${divisor}:`, isText: true },
+            { content: divBlock, isText: false },
+            { content: `${dividend} = ${divisor} * ${q} + ${r}`, isText: false },
+            { content: `(${q})`, isText: false },
+          ];
         } else {
+          // Окрема задача: пошук дробової частини частки (TASK-Q)
           taskType = 'TASK-Q';
           const g = gcd(r, divisor);
           const fn = r / g;
           const fd = divisor / g;
-          conditionText = `Знайдіть цілу та дробову частини частки від ділення ${dividend} / ${divisor} і запишіть їх у квадратних дужках через кому.`;
-          finalAnswer = q === 0 ? `${fn}/${fd}` : `[${q}, ${fn}/${fd}]`;
+          conditionText = 'Знайдіть дробову частину частки від ділення';
+          finalAnswer = `${fn}/${fd}`;
+          const reductionStep = g > 1 ? `${r}/${divisor}=${finalAnswer}` : finalAnswer;
           steps = [
-            { content: `${dividend} / ${divisor} = ${q} + ${fn}/${fd}`, isText: false },
-            { content: finalAnswer, isText: false },
+            { content: `Виконаємо ділення куточком ${dividend} на ${divisor}:`, isText: true },
+            { content: divBlock, isText: false },
+            { content: `${dividend}/${divisor} = ${q} + ${r}/${divisor}`, isText: false },
+            { content: reductionStep, isText: false },
           ];
         }
       }
@@ -247,7 +418,12 @@ export function generateAssignmentPreview(
           { content: '1) Швидкість проти течії:', isText: true },
           { content: `${vOwn} - ${vRiv} = ${vAg}`, isText: false },
           { content: '2) Час на зворотний шлях:', isText: true },
-          { content: `${s} / ${vAg} = ${finalAnswer}`, isText: false },
+          ...(g > 1 && fd > 1
+            ? [
+                { content: `${s} / ${vAg} = ${s}/${vAg}`, isText: false },
+                { content: `${s}/${vAg}=${finalAnswer}`, isText: false },
+              ]
+            : [{ content: `${s} / ${vAg} = ${finalAnswer}`, isText: false }]),
         ];
       } else {
         let t1 = brokenWork ? 4 : 5 + rng.nextInt(4);
@@ -281,7 +457,12 @@ export function generateAssignmentPreview(
             { content: `1) За 2 години обидві труби наповнять:`, isText: true },
             { content: `2 * (1/${t1} + 1/${t2}) = ${workDone}/${L}`, isText: false },
             { content: '2) Залишкова порожня частина:', isText: true },
-            { content: `1 - ${workDone}/${L} = ${finalAnswer}`, isText: false },
+            ...(g > 1 && fd > 1
+              ? [
+                  { content: `1 - ${workDone}/${L} = ${rem}/${L}`, isText: false },
+                  { content: `${rem}/${L}=${finalAnswer}`, isText: false },
+                ]
+              : [{ content: `1 - ${workDone}/${L} = ${finalAnswer}`, isText: false }]),
           ];
         }
       }
@@ -373,7 +554,12 @@ export function generateAssignmentPreview(
         finalAnswer = brokenFrac ? `${sumN}/${den}` : (den / g === 1 ? String(sumN / g) : `${sumN / g}/${den / g}`);
         steps = [
           { content: 'Додаємо чисельники при незмінному знаменнику:', isText: true },
-          { content: `(${n1} + ${n2}) / ${den} = ${finalAnswer}`, isText: false },
+          ...(!brokenFrac && g > 1 && den / g > 1
+            ? [
+                { content: `(${n1} + ${n2}) / ${den} = ${sumN}/${den}`, isText: false },
+                { content: `${sumN}/${den}=${finalAnswer}`, isText: false },
+              ]
+            : [{ content: `(${n1} + ${n2}) / ${den} = ${finalAnswer}`, isText: false }]),
         ];
       } else {
         const den = 4 + rng.nextInt(5);
@@ -436,11 +622,20 @@ export function generateAssignmentPreview(
       ];
     }
 
-    const rawBlock = renderTaskBlock(taskId, taskType, conditionText, steps, finalAnswer, brokenRenderer);
+    const rawBlock = renderTaskBlock(
+      taskId,
+      taskType,
+      conditionText,
+      steps,
+      finalAnswer,
+      brokenRenderer,
+      conditionMath
+    );
     const check = validateTaskMathpar({
       taskId,
       taskType,
       conditionText,
+      conditionMath,
       solutionSteps: steps,
       finalAnswer,
       rawBlock,
@@ -450,6 +645,7 @@ export function generateAssignmentPreview(
       taskId,
       taskType,
       conditionText,
+      conditionMath,
       solutionSteps: steps,
       finalAnswer,
       rawBlock,
@@ -458,7 +654,8 @@ export function generateAssignmentPreview(
     });
   }
 
-  const fullMathparText = `"${pageHeader}"\n${tasks.map((t) => t.rawBlock).join('\n')}\n===\n`;
+  const closingSep = brokenRenderer ? '===' : '"==="';
+  const fullMathparText = `"${pageHeader}"\n${tasks.map((t) => t.rawBlock).join('\n')}\n${closingSep}\n`;
 
   return {
     pageHeader,
@@ -524,24 +721,24 @@ export function runTestSuite(mode: 'original' | 'working'): TestSuiteSummary {
         : launcherCrit[0].description,
   });
 
-  // Test 3: MathparRenderer separates text ("...") and formulas (;)
+  // Test 3: MathparRenderer separates text ("...") and formulas (;), and enforces "---", "===", "_ ", and "?" rules
   const rendererIssues = diags.filter((d) => d.file.endsWith('MathparRenderer.java'));
   results.push({
     id: 'tc-mathpar-renderer',
     suite: 'mathpar_syntax',
-    name: 'MathparRenderer: розділення текстових кроків "..." та формул ";"',
+    name: 'MathparRenderer: службові рядки "===", "---", "_ " та умова з "?"',
     targetFile: 'engine/MathparRenderer.java',
     passed: rendererIssues.length === 0,
     durationMs: 11,
-    expected: 'Розрізнення step.isText() та коректне закриття формул крапкою з комою',
+    expected: 'Службові рядки "===", "---", "_ Рішення XX.", умова закінчується на "? без лапки після ?',
     actual:
       rendererIssues.length === 0
-        ? 'Блок _ "Рішення XX." формується за стандартом Mathpar'
-        : 'Порушено синтаксис: формули загорнуті в багаторядковий текстовий блок',
+        ? 'Формат "===", "---", "_ Рішення XX." та "..."? повністю дотримано'
+        : `${rendererIssues.length} порушень синтаксису Mathpar у MathparRenderer.java`,
     details:
       rendererIssues.length === 0
-        ? 'Усі формули виводяться без лапок із крапкою з комою, текстові коментарі — у лапках.'
-        : rendererIssues[0].description,
+        ? 'Усі формули виводяться без лапок із ";", умови закінчуються на ?, службові маркери в лапках.'
+        : rendererIssues.map((r) => r.description).join(' '),
   });
 
   // Test 4: Chapter16WorkGenerator pipe consistency & no duplicate TASK-Q prefix
@@ -564,23 +761,23 @@ export function runTestSuite(mode: 'original' | 'working'): TestSuiteSummary {
         : workIssues.map((w) => w.description).join(' '),
   });
 
-  // Test 5: ColumnDivisionGenerator zero divisor guard & Ukrainian localization
+  // Test 5: ColumnDivisionGenerator zero divisor guard, Ukrainian localization & separate whole/fractional tasks
   const divIssues = diags.filter((d) => d.file.endsWith('ColumnDivisionGenerator.java'));
   results.push({
     id: 'tc-div-guard',
     suite: 'math_invariants',
-    name: 'ColumnDivisionGenerator: захист від ділення на 0 та українська локалізація',
+    name: 'ColumnDivisionGenerator: захист від ділення на 0 та окремі задачі на цілу й дробову частини',
     targetFile: 'engine/ColumnDivisionGenerator.java',
     passed: divIssues.length === 0,
     durationMs: 7,
-    expected: 'IllegalArgumentException при divisor <= 0 та українські формулювання',
+    expected: 'IllegalArgumentException при divisor <= 0, окремі задачі цілої (TASK-Z) та дробової (TASK-Q) частин',
     actual:
       divIssues.length === 0
-        ? 'Захист ділення на 0 активний, умови українською'
+        ? 'Захист ділення на 0 активний, ціла та дробова частини розділені на окремі задачі'
         : `${divIssues.length} зауважень: ${divIssues.map((d) => d.title).join('; ')}`,
     details:
       divIssues.length === 0
-        ? 'Спрощені дроби в [частка, чисельник/знаменник] коректні.'
+        ? 'Покрокове ділення куточком, ціла частина та скорочена дробова частина формуються окремо.'
         : divIssues.map((d) => d.description).join(' '),
   });
 
@@ -644,24 +841,26 @@ export function runTestSuite(mode: 'original' | 'working'): TestSuiteSummary {
     details: 'Кожен параграф у плані має кратність 8 завдань (ціле число тижнів).',
   });
 
-  // Test 9: Live simulation of Chapter 1.6 & Chapter 4.3 Mathpar blocks
+  // Test 9: Live simulation of Chapter 1.3, 1.6 & Chapter 4.3 Mathpar blocks
+  const sim13 = generateAssignmentPreview('1.3', 1, 1, mode, 0);
   const sim16 = generateAssignmentPreview('1.6', 7, 1, mode, 11);
   const sim43 = generateAssignmentPreview('4.3', 20, 1, mode, 22);
-  const allRenderedOk = [...sim16.tasks, ...sim43.tasks].every((t) => t.syntaxValid);
+  const allRendered = [...sim13.tasks, ...sim16.tasks, ...sim43.tasks];
+  const allRenderedOk = allRendered.every((t) => t.syntaxValid);
   results.push({
     id: 'tc-live-render-validation',
     suite: 'mathpar_syntax',
-    name: 'Інтеграційний тест: генерація 20 задач (1.6 + 4.3) у форматі Mathpar',
+    name: 'Інтеграційний тест: генерація 30 задач (1.3 + 1.6 + 4.3) у форматі Mathpar',
     targetFile: 'engine/MathparRenderer.java',
     passed: allRenderedOk,
-    durationMs: 21,
-    expected: 'Усі 20 згенерованих задач проходять валідацію синтаксису Mathpar',
+    durationMs: 24,
+    expected: 'Усі 30 згенерованих задач проходять валідацію синтаксису Mathpar ("===", "---", "_ ", ...?)',
     actual: allRenderedOk
-      ? '20/20 задач валідні'
-      : `${[...sim16.tasks, ...sim43.tasks].filter((t) => !t.syntaxValid).length}/20 задач містять синтаксичні дефекти`,
+      ? '30/30 задач валідні'
+      : `${allRendered.filter((t) => !t.syntaxValid).length}/30 задач містять синтаксичні дефекти`,
     details: allRenderedOk
-      ? 'Усі блоки ===, ---, ?, _ "Рішення XX." та відповіді відповідають стандарту Mathpartner.'
-      : 'Виявлено дефекти в згенерованому виводі Mathpar (подвійні префікси або зламаний блок рішення).',
+      ? 'Стовпчики (1.3), текстові задачі (1.6) та дроби (4.3) відповідають стандарту Mathpartner.'
+      : 'Виявлено дефекти в згенерованому виводі Mathpar (лапка після ?, відсутні лапки на ===/--- або зламаний блок рішення).',
   });
 
   const passed = results.filter((r) => r.passed).length;

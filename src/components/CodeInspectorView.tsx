@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
+  Archive,
   CheckCircle2,
   FileCode2,
   GitCompare,
@@ -193,8 +194,16 @@ export function CodeInspectorView({
           ))}
         </div>
 
-        {modifiedCount > 0 && (
-          <div className="p-3 border-t border-slate-200 bg-slate-50">
+        <div className="p-3 border-t border-slate-200 bg-slate-50 space-y-2">
+          <a
+            href="/api/export/repo.zip"
+            download="mathTasks-java-patched.zip"
+            className="w-full py-2 px-3 text-xs font-medium text-sky-900 bg-sky-50 border border-sky-200 rounded-md hover:bg-sky-100 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            <span>Завантажити Java-проєкт (.zip)</span>
+          </a>
+          {modifiedCount > 0 && (
             <button
               type="button"
               disabled={busy}
@@ -204,8 +213,8 @@ export function CodeInspectorView({
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Скинути до оригіналу GitHub</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </aside>
 
       {/* Main Inspector Viewport */}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  Archive,
   CheckCircle2,
   Copy,
   Download,
@@ -81,6 +82,24 @@ export function MathparGeneratorView({
     a.download = preview.fileName;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadZip = (scope: 'section' | 'all') => {
+    const params = new URLSearchParams({
+      scope,
+      mode,
+      seedOffset: String(seedOffset),
+    });
+    if (scope === 'section') {
+      params.set('sectionId', selectedSection);
+    }
+    const a = document.createElement('a');
+    a.href = `/api/export/tasks.zip?${params.toString()}`;
+    a.download =
+      scope === 'section'
+        ? `mathTasks-section-${selectedSection}.zip`
+        : `mathTasks-5klass-${mode}.zip`;
+    a.click();
   };
 
   const totalPlanAssignments = chapters.reduce((acc, c) => acc + c.totalAssignments, 0);
@@ -182,10 +201,26 @@ export function MathparGeneratorView({
                 type="button"
                 onClick={handleDownloadTxt}
                 disabled={!preview}
-                className="py-2 px-4 text-xs font-medium text-white bg-sky-700 hover:bg-sky-800 rounded-md transition-colors flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
+                className="py-2 px-3.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-md transition-colors flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap shrink-0"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Експорт .txt</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDownloadZip('section')}
+                className="py-2 px-3.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>Розділ {selectedSection} (.zip)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDownloadZip('all')}
+                className="py-2 px-4 text-xs font-medium text-white bg-sky-700 hover:bg-sky-800 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>Завантажити всі (.zip)</span>
               </button>
             </div>
           </div>
@@ -319,6 +354,11 @@ export function MathparGeneratorView({
                   </div>
 
                   <p className="text-sm text-slate-900 leading-relaxed">{task.conditionText}</p>
+                  {task.conditionMath && (
+                    <pre className="p-3 bg-slate-50 border border-slate-200 rounded-md font-mono text-xs leading-5 text-slate-900 overflow-x-auto whitespace-pre">
+                      {task.conditionMath}
+                    </pre>
+                  )}
 
                   {!task.syntaxValid && (
                     <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs text-amber-900 space-y-1">
@@ -372,11 +412,18 @@ export function MathparGeneratorView({
                   {isShown && (
                     <div className="bg-slate-50 border border-slate-200 rounded-md p-4 space-y-2 text-xs">
                       <div className="font-semibold text-slate-800">
-                        Приховане рішення Mathpar (_ &quot;Рішення {task.taskId}.&quot;)
+                        Приховане рішення Mathpar (&quot;_ Рішення {task.taskId}.&quot;)
                       </div>
                       <div className="space-y-1 font-mono text-slate-700">
                         {task.solutionSteps.map((st, idx) => (
-                          <div key={idx} className={st.isText ? 'font-sans text-slate-700' : 'text-sky-900'}>
+                          <div
+                            key={idx}
+                            className={
+                              st.isText
+                                ? 'font-sans text-slate-700'
+                                : 'text-sky-900 whitespace-pre overflow-x-auto'
+                            }
+                          >
                             {st.isText ? st.content : `${st.content}${idx < task.solutionSteps.length - 1 ? ';' : ''}`}
                           </div>
                         ))}

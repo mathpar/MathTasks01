@@ -1,7 +1,7 @@
 import { deleteWorkingFile, writeWorkingFile } from './repoStore.ts';
 
 export const PATCHED_FILES: Record<string, string> = {
-  'src/main/java/com/mathpartner/generator/model/Task.java': `package com.mathpartner.generator.model;
+  'src/main/java/com/mathpartner/generator/model/Task.java': String.raw`package com.mathpartner.generator.model;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,6 +13,7 @@ public class Task {
   private final String taskId;
   private final String taskType; // "TASK-Z", "TASK-Q", "TASK-D0", "TASK-D1", "TASK-D2", "TASK-D4"
   private final String conditionText;
+  private String conditionMath;
   private final List<SolutionStep> solutionSteps = new ArrayList<>();
   private final String finalAnswer;
 
@@ -46,6 +47,14 @@ public class Task {
     return conditionText;
   }
 
+  public String getConditionMath() {
+    return conditionMath;
+  }
+
+  public void setConditionMath(String conditionMath) {
+    this.conditionMath = conditionMath;
+  }
+
   public List<SolutionStep> getSolutionSteps() {
     return solutionSteps;
   }
@@ -61,7 +70,7 @@ public class Task {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/engine/MathparRenderer.java': `package com.mathpartner.generator.engine;
+  'src/main/java/com/mathpartner/generator/engine/MathparRenderer.java': String.raw`package com.mathpartner.generator.engine;
 
 import com.mathpartner.generator.model.Assignment;
 import com.mathpartner.generator.model.SolutionStep;
@@ -83,52 +92,255 @@ public class MathparRenderer {
     for (Task task : assignment.getTasks()) {
       sb.append(renderTask(task));
     }
-    sb.append("===\n");
+    sb.append("\"===\"\n");
     return sb.toString();
   }
 
   /**
-   * Рендерить одну задачу з розділювачами ===, ---, ? та правильним розділенням тексту і формул.
+   * Рендерить одну задачу з розділювачами "===", "---", ?, "_ " та умовою, що закінчується на ?.
    */
   public String renderTask(Task task) {
+    String rawCondition = task.getConditionText() == null ? "" : task.getConditionText().trim();
     StringBuilder sb = new StringBuilder();
-    sb.append("===\n");
-    sb.append("\"")
-        .append(task.getTaskType())
-        .append(" ")
-        .append(task.getTaskId())
-        .append(". ")
-        .append(task.getConditionText())
-        .append("\"\n");
-    sb.append("---\n?\n===\n");
-    sb.append("_ \"Рішення ").append(task.getTaskId()).append(".\"\n");
+    sb.append("\"===\"\n");
+
+    if (task.getConditionMath() != null && !task.getConditionMath().isBlank()) {
+      String textPart = rawCondition.replaceAll("[?\"\\s]+$", "");
+      sb.append("\"")
+          .append(task.getTaskType())
+          .append(" ")
+          .append(task.getTaskId())
+          .append(". ")
+          .append(textPart)
+          .append(" \"\n");
+      String mathCond = task.getConditionMath().replaceAll("\\s+$", "");
+      if (!mathCond.endsWith("?")) {
+        mathCond = mathCond + "?";
+      }
+      sb.append(mathCond).append("\n");
+    } else {
+      String cleanCondition = rawCondition.replaceAll("[.?\"\\s]+$", "");
+      if (cleanCondition.endsWith("=")) {
+        cleanCondition = cleanCondition + " ";
+      }
+      sb.append("\"")
+          .append(task.getTaskType())
+          .append(" ")
+          .append(task.getTaskId())
+          .append(". ")
+          .append(cleanCondition)
+          .append("\"?\n");
+    }
+
+    sb.append("\"---\"\n?\n\"===\"\n");
 
     List<SolutionStep> steps = task.getSolutionSteps();
-    for (int i = 0; i < steps.size(); i++) {
+    int startIdx = 0;
+    if (!steps.isEmpty() && steps.get(0).isText()) {
+      sb.append("\"_ Рішення ")
+          .append(task.getTaskId())
+          .append(".\n  ")
+          .append(steps.get(0).getContent().trim())
+          .append("\"\n");
+      startIdx = 1;
+    } else {
+      sb.append("\"_ Рішення ").append(task.getTaskId()).append(".\"\n");
+    }
+
+    for (int i = startIdx; i < steps.size(); i++) {
       SolutionStep step = steps.get(i);
-      String content = step.getContent().trim();
       if (step.isText()) {
-        sb.append("  \"").append(content).append("\"\n");
+        sb.append("  \"").append(step.getContent().trim()).append("\"\n");
       } else {
         boolean isLast = (i == steps.size() - 1);
-        String cleanExpr = content.endsWith(";") ? content.substring(0, content.length() - 1) : content;
-        sb.append("  ").append(cleanExpr).append(isLast ? "" : ";").append("\n");
+        String rawFormula = step.getContent().replaceAll("[;\\s]+$", "");
+        if (rawFormula.contains("\n")) {
+          sb.append(rawFormula).append(isLast ? "" : ";").append("\n");
+        } else {
+          sb.append("  ").append(rawFormula.trim()).append(isLast ? "" : ";").append("\n");
+        }
       }
     }
 
-    sb.append("---\n").append(task.getFinalAnswer()).append("\n");
+    sb.append("\"---\"\n").append(task.getFinalAnswer()).append("\n");
     return sb.toString();
   }
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/engine/ColumnDivisionGenerator.java': `package com.mathpartner.generator.engine;
+  'src/main/java/com/mathpartner/generator/engine/ColumnMultiplicationGenerator.java': String.raw`package com.mathpartner.generator.engine;
 
 import com.mathpartner.generator.model.Task;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 
 /**
- * Генератор ділення куточком із суворим контролем ділення на нуль та формату Mathpar.
+ * Генератор задач на множення у стовпчик із суворим вирівнюванням розрядів
+ * (одиниці під одиницями, десятки під десятками, сотні під сотнями).
+ */
+public class ColumnMultiplicationGenerator {
+
+  private final Random random = new Random();
+
+  public static class MultiplicationTask {
+    public int multiplicand;
+    public int multiplier;
+    public int[] intermediateProducts;
+    public int finalResult;
+    public String conditionMath;
+    public String mathparRender;
+
+    @Override
+    public String toString() {
+      return mathparRender;
+    }
+
+    /**
+     * Перетворює задачу множення у стовпчик на модель Task для MathparRenderer.
+     */
+    public Task toTask(String taskId) {
+      Task task =
+          new Task(
+              taskId,
+              "TASK-Z",
+              "Обчисліть множення у стовпчик:",
+              String.valueOf(finalResult));
+      task.setConditionMath(conditionMath);
+      task.addTextStep("Виконаємо множення розряд за розрядом у стовпчик:");
+      task.addFormulaStep(mathparRender);
+      return task;
+    }
+  }
+
+  /**
+   * Генерує задачу на множення двох чисел заданої розрядності.
+   */
+  public MultiplicationTask generateTask(int digits1, int digits2) {
+    MultiplicationTask task = new MultiplicationTask();
+
+    task.multiplicand = generateRandomNumber(digits1);
+    task.multiplier = generateNonZeroDigitNumber(digits2);
+    task.finalResult = task.multiplicand * task.multiplier;
+
+    String multiplierStr = String.valueOf(task.multiplier);
+    int len = multiplierStr.length();
+    task.intermediateProducts = new int[len];
+
+    for (int i = 0; i < len; i++) {
+      int digit = Character.getNumericValue(multiplierStr.charAt(len - 1 - i));
+      task.intermediateProducts[i] = task.multiplicand * digit;
+    }
+
+    task.conditionMath = buildColumnBlock(task, true);
+    task.mathparRender = buildColumnBlock(task, false);
+    return task;
+  }
+
+  private int generateRandomNumber(int digits) {
+    if (digits <= 0) {
+      return 0;
+    }
+    int min = (int) Math.pow(10, digits - 1);
+    int max = (int) Math.pow(10, digits) - 1;
+    return min + random.nextInt(max - min + 1);
+  }
+
+  private int generateNonZeroDigitNumber(int digits) {
+    if (digits <= 0) {
+      return 0;
+    }
+    int value = 0;
+    for (int i = 0; i < digits; i++) {
+      value = value * 10 + (1 + random.nextInt(9));
+    }
+    return value;
+  }
+
+  private String spaces(int count) {
+    return " ".repeat(Math.max(0, count));
+  }
+
+  /**
+   * Формує стовпчик множення з жорстким позиціонуванням кожного розряду.
+   */
+  private String buildColumnBlock(MultiplicationTask task, boolean conditionOnly) {
+    String m1 = String.valueOf(task.multiplicand);
+    String m2 = String.valueOf(task.multiplier);
+    String res = String.valueOf(task.finalResult);
+
+    int minLeftRel = Math.min(-(m1.length() - 1), Math.min(-(m2.length() - 1), -(res.length() - 1)));
+    List<int[]> partialRows = new ArrayList<>();
+    for (int k = 0; k < task.intermediateProducts.length; k++) {
+      partialRows.add(new int[] {k, task.intermediateProducts[k]});
+    }
+
+    for (int idx = 0; idx < partialRows.size(); idx++) {
+      int shift = partialRows.get(idx)[0];
+      String pStr = String.valueOf(partialRows.get(idx)[1]);
+      int left = -(shift + pStr.length() - 1) - (idx > 0 ? 1 : 0);
+      if (left < minLeftRel) {
+        minLeftRel = left;
+      }
+    }
+
+    int starCol = 4;
+    int starRel = minLeftRel - 1;
+    int onesCol = starCol - starRel;
+
+    StringBuilder sb = new StringBuilder();
+    int m1Start = onesCol - (m1.length() - 1);
+    sb.append(spaces(m1Start)).append(m1).append("\n");
+
+    int m2Start = onesCol - (m2.length() - 1);
+    sb.append(spaces(starCol))
+        .append("*")
+        .append(spaces(m2Start - starCol - 1))
+        .append(m2)
+        .append("=");
+
+    if (conditionOnly) {
+      sb.append(" ?");
+      return sb.toString();
+    }
+    sb.append("\n");
+
+    if (partialRows.size() > 1) {
+      for (int idx = 0; idx < partialRows.size(); idx++) {
+        int shift = partialRows.get(idx)[0];
+        String pStr = String.valueOf(partialRows.get(idx)[1]);
+        int pEndCol = onesCol - shift;
+        int pStartCol = pEndCol - (pStr.length() - 1);
+        if (idx == 0) {
+          sb.append(spaces(pStartCol)).append(pStr).append("\n");
+        } else {
+          boolean isLastPartial = (idx == partialRows.size() - 1);
+          sb.append(spaces(pStartCol - 1)).append("+").append(pStr);
+          if (isLastPartial) {
+            sb.append(spaces(onesCol + 1 - (pEndCol + 1))).append("=");
+          }
+          sb.append("\n");
+        }
+      }
+    }
+
+    int resStart = onesCol - (res.length() - 1);
+    sb.append(spaces(resStart)).append(res);
+    return sb.toString();
+  }
+}
+`,
+
+  'src/main/java/com/mathpartner/generator/engine/ColumnDivisionGenerator.java': String.raw`package com.mathpartner.generator.engine;
+
+import com.mathpartner.generator.model.Task;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+/**
+ * Генератор ділення куточком із суворим вирівнюванням розрядів, контролем ділення на нуль
+ * та розділенням пошуку цілої і дробової частин на окремі задачі.
  */
 public class ColumnDivisionGenerator {
 
@@ -137,6 +349,7 @@ public class ColumnDivisionGenerator {
   public static class DivisionTask {
     public String taskType; // TASK-Z або TASK-Q
     public String textUa;
+    public String conditionMath;
     public String solution;
     public String answer;
 
@@ -147,13 +360,17 @@ public class ColumnDivisionGenerator {
 
     public Task toTask(String taskId) {
       Task task = new Task(taskId, taskType, textUa, answer);
-      for (String line : solution.split("\\n")) {
-        String trimmed = line.trim();
-        if (!trimmed.isEmpty()) {
-          if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
-            task.addTextStep(trimmed.substring(1, trimmed.length() - 1));
-          } else {
-            task.addFormulaStep(trimmed);
+      task.setConditionMath(conditionMath);
+      String[] parts = solution.split("\\n---STEPS---\\n");
+      if (parts.length > 0 && !parts[0].isBlank()) {
+        task.addTextStep(parts[0].trim());
+      }
+      if (parts.length > 1) {
+        String[] blocks = parts[1].split("\\n---BLOCK---\\n");
+        for (String block : blocks) {
+          String clean = block.replaceAll("[;\\s]+$", "");
+          if (!clean.isBlank()) {
+            task.addFormulaStep(clean);
           }
         }
       }
@@ -166,7 +383,10 @@ public class ColumnDivisionGenerator {
    *
    * @param dividend ділене
    * @param divisor дільник (має бути &gt; 0)
-   * @param formatType 0 — без остачі, 1 — [частка, остача], 2 — [ціла частина, дріб]
+   * @param formatType 0 — точне ділення без остачі,
+   *     1 — [частка, остача],
+   *     2 — пошук цілої частини частки (окрема задача TASK-Z),
+   *     3 — пошук дробової частини частки (окрема задача TASK-Q)
    */
   public DivisionTask generateTask(int dividend, int divisor, int formatType) {
     if (divisor <= 0) {
@@ -179,57 +399,124 @@ public class ColumnDivisionGenerator {
       if (dividend == 0) {
         dividend = divisor * (2 + random.nextInt(9));
       }
+    } else if ((formatType == 2 || formatType == 3) && dividend % divisor == 0) {
+      dividend += 1 + random.nextInt(Math.max(1, divisor - 1));
     }
 
     int quotient = dividend / divisor;
     int remainder = dividend % divisor;
+    String columnBlock = buildColumnDivisionBlock(dividend, divisor);
+    task.conditionMath = String.format("    %d/%d =?", dividend, divisor);
+    String introText = String.format("Виконаємо ділення куточком %d на %d:", dividend, divisor);
 
     if (remainder == 0) {
       task.taskType = "TASK-Z";
-      task.textUa = "Обчисліть ділення куточком: " + dividend + " / " + divisor + " = ?";
+      task.textUa = "Обчисліть ділення куточком:";
       task.answer = String.valueOf(quotient);
-      task.solution = dividend + " / " + divisor + " = " + quotient;
+      task.solution =
+          introText
+              + "\n---STEPS---\n"
+              + columnBlock
+              + "\n---BLOCK---\n"
+              + String.format("(%d)", quotient);
       return task;
     }
 
     if (formatType == 1) {
       task.taskType = "TASK-Z";
-      task.textUa =
-          "Знайдіть неповну частку та остачу від ділення "
-              + dividend
-              + " / "
-              + divisor
-              + " і запишіть їх у квадратних дужках через кому.";
+      task.textUa = "Знайдіть неповну частку та остачу від ділення:";
       task.answer = String.format("[%d, %d]", quotient, remainder);
       task.solution =
-          String.format(
-              "\"%d = %d * %d + %d\"\n[%d, %d]", dividend, divisor, quotient, remainder, quotient, remainder);
+          introText
+              + "\n---STEPS---\n"
+              + columnBlock
+              + "\n---BLOCK---\n"
+              + String.format("%d = %d * %d + %d", dividend, divisor, quotient, remainder)
+              + "\n---BLOCK---\n"
+              + String.format("[%d, %d]", quotient, remainder);
+    } else if (formatType == 2) {
+      // Окрема задача 1: пошук цілої частини частки
+      task.taskType = "TASK-Z";
+      task.textUa = "Знайдіть цілу частину частки від ділення";
+      task.answer = String.valueOf(quotient);
+      task.solution =
+          introText
+              + "\n---STEPS---\n"
+              + columnBlock
+              + "\n---BLOCK---\n"
+              + String.format("%d = %d * %d + %d", dividend, divisor, quotient, remainder)
+              + "\n---BLOCK---\n"
+              + String.format("(%d)", quotient);
     } else {
+      // Окрема задача 2: пошук дробової частини частки
       task.taskType = "TASK-Q";
-      task.textUa =
-          "Знайдіть цілу та дробову частини частки від ділення "
-              + dividend
-              + " / "
-              + divisor
-              + " і запишіть їх у квадратних дужках через кому.";
+      task.textUa = "Знайдіть дробову частину частки від ділення";
 
       int gcd = calculateGCD(remainder, divisor);
       int finalNum = remainder / gcd;
       int finalDen = divisor / gcd;
 
-      if (quotient == 0) {
-        task.answer = String.format("%d/%d", finalNum, finalDen);
-      } else {
-        task.answer = String.format("[%d, %d/%d]", quotient, finalNum, finalDen);
-      }
-
+      task.answer = String.format("%d/%d", finalNum, finalDen);
+      String reductionStep =
+          (gcd > 1)
+              ? String.format("%d/%d=%d/%d", remainder, divisor, finalNum, finalDen)
+              : task.answer;
       task.solution =
-          String.format(
-              "%d / %d = %d + %d/%d\n%s",
-              dividend, divisor, quotient, finalNum, finalDen, task.answer);
+          introText
+              + "\n---STEPS---\n"
+              + columnBlock
+              + "\n---BLOCK---\n"
+              + String.format("%d/%d = %d + %d/%d", dividend, divisor, quotient, remainder, divisor)
+              + "\n---BLOCK---\n"
+              + reductionStep;
     }
 
     return task;
+  }
+
+  /**
+   * Будує блок ділення куточком із точним позиціонуванням розрядів під діленим.
+   */
+  private String buildColumnDivisionBlock(int dividend, int divisor) {
+    String digits = String.valueOf(dividend);
+    String divisorStr = String.valueOf(divisor);
+    int baseCol = 4;
+    int qCol = baseCol + digits.length() + divisorStr.length() + 1;
+
+    List<String> lines = new ArrayList<>();
+    lines.add(" ".repeat(baseCol) + digits + "/" + divisorStr + "=");
+
+    int current = 0;
+    boolean started = false;
+    for (int i = 0; i < digits.length(); i++) {
+      current = current * 10 + (digits.charAt(i) - '0');
+      if (!started && current < divisor && i < digits.length() - 1) {
+        continue;
+      }
+      int curEndCol = baseCol + i;
+      if (started) {
+        String curStr = String.valueOf(current);
+        int curStartCol = curEndCol - curStr.length() + 1;
+        lines.add(" ".repeat(Math.max(0, curStartCol - 2)) + "= " + curStr);
+      }
+      started = true;
+
+      int qDigit = current / divisor;
+      int product = qDigit * divisor;
+      String prodStr = String.valueOf(product);
+      int prodStartCol = curEndCol - prodStr.length() + 1;
+      String leftSub = " ".repeat(Math.max(0, prodStartCol - 2)) + "- " + prodStr;
+      int padToQ = Math.max(1, (qCol - 1) - leftSub.length());
+      lines.add(leftSub + " ".repeat(padToQ) + "(" + qDigit + ")");
+      current = current - product;
+    }
+
+    String remStr = String.valueOf(current);
+    int remEndCol = baseCol + digits.length() - 1;
+    int remStartCol = remEndCol - remStr.length() + 1;
+    lines.add(" ".repeat(Math.max(0, remStartCol - 2)) + "= " + remStr);
+
+    return String.join("\n", lines);
   }
 
   private int calculateGCD(int a, int b) {
@@ -243,7 +530,7 @@ public class ColumnDivisionGenerator {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter14ExpressionGenerator.java': `package com.mathpartner.generator.chapters.chapter1;
+  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter14ExpressionGenerator.java': String.raw`package com.mathpartner.generator.chapters.chapter1;
 
 import com.mathpartner.generator.model.Task;
 import java.util.Random;
@@ -319,7 +606,7 @@ public class Chapter14ExpressionGenerator {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter16MotionGenerator.java': `package com.mathpartner.generator.chapters.chapter1;
+  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter16MotionGenerator.java': String.raw`package com.mathpartner.generator.chapters.chapter1;
 
 import com.mathpartner.generator.model.Task;
 import java.util.Random;
@@ -379,15 +666,17 @@ public class Chapter16MotionGenerator {
             "З двох міст назустріч один одному одночасно виїхали два автомобілі. Швидкість першого %d км/год, а другого — %d км/год. Через скільки годин вони зустрінуться, якщо відстань між містами %d км?",
             v1, v2, tNumerator);
 
+    String reducedVal =
+        finalDen == 1 ? String.valueOf(finalNum) : String.format("%d/%d", finalNum, finalDen);
+    String step2Formula =
+        (gcd > 1 && finalDen > 1)
+            ? String.format("%d/%d = %s", tNumerator, vSum, reducedVal)
+            : String.format("%d / %d = %s", tNumerator, vSum, reducedVal);
+
     task.solution =
         String.format(
-            "\"1) Швидкість зближення:\"\n%d + %d = %d\n\"2) Час до зустрічі:\"\n%d / %d = %s",
-            v1,
-            v2,
-            vSum,
-            tNumerator,
-            vSum,
-            finalDen == 1 ? String.valueOf(finalNum) : String.format("%d/%d", finalNum, finalDen));
+            "\"1) Швидкість зближення:\"\n%d + %d = %d\n\"2) Час до зустрічі:\"\n%s",
+            v1, v2, vSum, step2Formula);
 
     if (finalDen == 1) {
       task.taskType = "TASK-Z";
@@ -417,15 +706,17 @@ public class Chapter16MotionGenerator {
             "Власна швидкість катера %d км/год, а швидкість течії річки %d км/год. Катер пройшов за течією відстань %d км. Скільки годин витратить катер на зворотний шлях проти течії?",
             vOwn, vRiver, s);
 
+    String reducedVal =
+        finalDen == 1 ? String.valueOf(finalNum) : String.format("%d/%d", finalNum, finalDen);
+    String step2Formula =
+        (gcd > 1 && finalDen > 1)
+            ? String.format("%d/%d = %s", s, vAgainst, reducedVal)
+            : String.format("%d / %d = %s", s, vAgainst, reducedVal);
+
     task.solution =
         String.format(
-            "\"1) Швидкість проти течії:\"\n%d - %d = %d\n\"2) Час на зворотний шлях:\"\n%d / %d = %s",
-            vOwn,
-            vRiver,
-            vAgainst,
-            s,
-            vAgainst,
-            finalDen == 1 ? String.valueOf(finalNum) : String.format("%d/%d", finalNum, finalDen));
+            "\"1) Швидкість проти течії:\"\n%d - %d = %d\n\"2) Час на зворотний шлях:\"\n%s",
+            vOwn, vRiver, vAgainst, step2Formula);
 
     if (finalDen == 1) {
       task.taskType = "TASK-Z";
@@ -448,7 +739,7 @@ public class Chapter16MotionGenerator {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter16WorkGenerator.java': `package com.mathpartner.generator.chapters.chapter1;
+  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter16WorkGenerator.java': String.raw`package com.mathpartner.generator.chapters.chapter1;
 
 import com.mathpartner.generator.model.Task;
 import java.util.Random;
@@ -550,10 +841,15 @@ public class Chapter16WorkGenerator {
             "Перша труба може наповнити басейн за %d годин, а друга — за %d годин. Яка частина басейну залишиться порожньою після 2 годин одночасної роботи обох труб?",
             t1, t2);
 
+    String remStepFormula =
+        (gcd > 1 && finalDen > 1)
+            ? String.format("1 - %d/%d = %d/%d\n%d/%d=%d/%d", workDoneNum, lcm, remainingNum, lcm, remainingNum, lcm, finalNum, finalDen)
+            : String.format("1 - %d/%d = %d/%d", workDoneNum, lcm, finalNum, finalDen);
+
     task.solution =
         String.format(
-            "\"1) Продуктивність першої труби 1/%d, другої 1/%d. За 2 години разом:\"\n2 * (1/%d + 1/%d) = %d/%d\n\"2) Залишкова порожня частина:\"\n1 - %d/%d = %d/%d",
-            t1, t2, t1, t2, workDoneNum, lcm, workDoneNum, lcm, finalNum, finalDen);
+            "\"1) Продуктивність першої труби 1/%d, другої 1/%d. За 2 години разом:\"\n2 * (1/%d + 1/%d) = %d/%d\n\"2) Залишкова порожня частина:\"\n%s",
+            t1, t2, t1, t2, workDoneNum, lcm, remStepFormula);
 
     if (finalDen == 1) {
       task.taskType = "TASK-Z";
@@ -579,7 +875,7 @@ public class Chapter16WorkGenerator {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter1Generator.java': `package com.mathpartner.generator.chapters.chapter1;
+  'src/main/java/com/mathpartner/generator/chapters/chapter1/Chapter1Generator.java': String.raw`package com.mathpartner.generator.chapters.chapter1;
 
 import com.mathpartner.generator.engine.AssignmentGenerator;
 import com.mathpartner.generator.engine.ColumnDivisionGenerator;
@@ -625,20 +921,15 @@ public class Chapter1Generator implements AssignmentGenerator {
           int d2 = 2 + random.nextInt(2);
           ColumnMultiplicationGenerator.MultiplicationTask mTask =
               multiplicationGen.generateTask(d1, d2);
-          Task multTask =
-              new Task(
-                  taskId,
-                  "TASK-Z",
-                  String.format("Обчисліть множення у стовпчик: %d * %d = ?", mTask.multiplicand, mTask.multiplier),
-                  String.valueOf(mTask.finalResult));
-          multTask.addFormulaStep(mTask.mathparRender);
-          assignment.addTask(multTask);
+          assignment.addTask(mTask.toTask(taskId));
           break;
 
         case 1:
           int dividend = 100 + random.nextInt(900);
           int divisor = 5 + random.nextInt(20);
-          int formType = random.nextInt(3);
+          // 0 — точне ділення, 2 — пошук цілої частини (окрема задача), 3 — пошук дробової частини (окрема задача)
+          int[] divModes = {0, 2, 3};
+          int formType = divModes[random.nextInt(divModes.length)];
           ColumnDivisionGenerator.DivisionTask dTask =
               divisionGen.generateTask(dividend, divisor, formType);
           assignment.addTask(dTask.toTask(taskId));
@@ -702,7 +993,7 @@ public class Chapter1Generator implements AssignmentGenerator {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/MainLauncher2.java': `package com.mathpartner.generator;
+  'src/main/java/com/mathpartner/generator/MainLauncher2.java': String.raw`package com.mathpartner.generator;
 
 import com.mathpartner.generator.chapters.chapter1.Chapter1Generator;
 import com.mathpartner.generator.engine.MathparRenderer;
@@ -734,7 +1025,7 @@ public class MainLauncher2 {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter3/DivisibilityRulesGen.java': `package com.mathpartner.generator.chapters.chapter3;
+  'src/main/java/com/mathpartner/generator/chapters/chapter3/DivisibilityRulesGen.java': String.raw`package com.mathpartner.generator.chapters.chapter3;
 
 import com.mathpartner.generator.model.Task;
 import java.util.Random;
@@ -803,7 +1094,7 @@ public class DivisibilityRulesGen {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter4/FractionArithmeticGen.java': `package com.mathpartner.generator.chapters.chapter4;
+  'src/main/java/com/mathpartner/generator/chapters/chapter4/FractionArithmeticGen.java': String.raw`package com.mathpartner.generator.chapters.chapter4;
 
 import com.mathpartner.generator.model.Task;
 import java.util.Random;
@@ -832,7 +1123,12 @@ public class FractionArithmeticGen {
 
       Task task = new Task(taskId, finalDen == 1 ? "TASK-Z" : "TASK-Q", condition, answer);
       task.addTextStep("Додаємо чисельники, знаменник залишаємо без змін, і скорочуємо на НСД:");
-      task.addFormulaStep(String.format("(%d + %d) / %d = %s", n1, n2, denom, answer));
+      if (gcd > 1 && finalDen > 1) {
+        task.addFormulaStep(String.format("(%d + %d) / %d = %d/%d", n1, n2, denom, sumNum, denom));
+        task.addFormulaStep(String.format("%d/%d=%s", sumNum, denom, answer));
+      } else {
+        task.addFormulaStep(String.format("(%d + %d) / %d = %s", n1, n2, denom, answer));
+      }
       return task;
     } else {
       int w1 = 5 + random.nextInt(4);
@@ -869,7 +1165,7 @@ public class FractionArithmeticGen {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter5/DecimalArithmeticGen.java': `package com.mathpartner.generator.chapters.chapter5;
+  'src/main/java/com/mathpartner/generator/chapters/chapter5/DecimalArithmeticGen.java': String.raw`package com.mathpartner.generator.chapters.chapter5;
 
 import com.mathpartner.generator.model.Task;
 import java.math.BigDecimal;
@@ -915,7 +1211,7 @@ public class DecimalArithmeticGen {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter5/DecimalAverageGen.java': `package com.mathpartner.generator.chapters.chapter5;
+  'src/main/java/com/mathpartner/generator/chapters/chapter5/DecimalAverageGen.java': String.raw`package com.mathpartner.generator.chapters.chapter5;
 
 import com.mathpartner.generator.model.Task;
 import java.math.BigDecimal;
@@ -992,7 +1288,7 @@ public class DecimalAverageGen {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter3/Chapter3Generator.java': `package com.mathpartner.generator.chapters.chapter3;
+  'src/main/java/com/mathpartner/generator/chapters/chapter3/Chapter3Generator.java': String.raw`package com.mathpartner.generator.chapters.chapter3;
 
 import com.mathpartner.generator.engine.AssignmentGenerator;
 import com.mathpartner.generator.engine.MathparRenderer;
@@ -1088,7 +1384,7 @@ public class Chapter3Generator implements AssignmentGenerator {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter4/Chapter4Generator.java': `package com.mathpartner.generator.chapters.chapter4;
+  'src/main/java/com/mathpartner/generator/chapters/chapter4/Chapter4Generator.java': String.raw`package com.mathpartner.generator.chapters.chapter4;
 
 import com.mathpartner.generator.engine.AssignmentGenerator;
 import com.mathpartner.generator.engine.MathparRenderer;
@@ -1177,7 +1473,7 @@ public class Chapter4Generator implements AssignmentGenerator {
 }
 `,
 
-  'src/main/java/com/mathpartner/generator/chapters/chapter5/Chapter5Generator.java': `package com.mathpartner.generator.chapters.chapter5;
+  'src/main/java/com/mathpartner/generator/chapters/chapter5/Chapter5Generator.java': String.raw`package com.mathpartner.generator.chapters.chapter5;
 
 import com.mathpartner.generator.engine.AssignmentGenerator;
 import com.mathpartner.generator.engine.MathparRenderer;

@@ -122,7 +122,33 @@ export function analyzeFile(relPath: string, content: string, ch1Content?: strin
         description:
           'Усі кроки розв’язання склеюються всередину одного багаторядкового текстового рядка "_ Рішення ...", через що формули не обчислюються, а прості текстові кроки не розділяються крапкою з комою.',
         suggestion:
-          'Рендеринг блоку розв’язку має відкриватися як _ "Рішення XX.", далі текстові кроки в "..." а обчислювальні вирази без лапок із ";" (крім останнього).',
+          'Рендеринг блоку розв’язку має відкриватися як "_ Рішення XX.", далі текстові кроки в "..." а обчислювальні вирази без лапок із ";" (крім останнього).',
+      });
+    }
+    if (!content.includes(String.raw`\"===\"`) || !content.includes(String.raw`\"---\"`)) {
+      diags.push({
+        id: 'renderer-unquoted-delimiters',
+        file: relPath,
+        line: findLine(content, '===') || 1,
+        severity: 'medium',
+        category: 'mathpar_syntax',
+        title: 'Службові рядки === та --- не загорнуті у подвійні лапки',
+        description:
+          'У згенерованих файлах службові рядки на початку рядка повинні бути замінені: "---" замість --- та "===" замість ===.',
+        suggestion: 'Виводьте "\\"===\\"" та "\\"---\\"" у MathparRenderer.',
+      });
+    }
+    if (!content.includes(String.raw`\"?\n`)) {
+      diags.push({
+        id: 'renderer-question-mark-quote',
+        file: relPath,
+        line: findLine(content, 'getConditionText') || 1,
+        severity: 'medium',
+        category: 'mathpar_syntax',
+        title: 'Закриваюча подвійна лапка після ? або відсутній ? в кінці умови',
+        description:
+          'У всіх умовах задач останнім символом має бути знак питання (?), а подвійна лапка може стояти лише перед ?, але не після нього.',
+        suggestion: 'Формуйте рядок умови як "...текст умови"? (лапка строго перед ?).',
       });
     }
   }
@@ -180,7 +206,7 @@ export function analyzeFile(relPath: string, content: string, ch1Content?: strin
     }
   }
 
-  // 6. ColumnDivisionGenerator divisor == 0 guard & Mathpar structure
+  // 6. ColumnDivisionGenerator divisor == 0 guard & separate whole/fractional tasks
   if (relPath.endsWith('ColumnDivisionGenerator.java')) {
     if (!content.includes('divisor <= 0') && !content.includes('divisor == 0')) {
       diags.push({
@@ -192,6 +218,36 @@ export function analyzeFile(relPath: string, content: string, ch1Content?: strin
         title: 'Відсутня перевірка ділення на нуль (divisor <= 0)',
         description: 'Метод generateTask(dividend, divisor, formatType) одразу виконує dividend / divisor без перевірки divisor <= 0.',
         suggestion: 'Додайте перевірку IllegalArgumentException при divisor <= 0.',
+      });
+    }
+    if (!content.includes('formatType == 3')) {
+      diags.push({
+        id: 'div-separate-whole-fraction',
+        file: relPath,
+        line: findLine(content, 'formatType'),
+        severity: 'medium',
+        category: 'mathpar_syntax',
+        title: 'Пошук цілої та дробової частин поєднані в одну задачу',
+        description:
+          'Виділіть пошук цілої частини частки (TASK-Z) та пошук дробової частини частки (TASK-Q) у дві окремі задачі.',
+        suggestion: 'Розділіть на formatType == 2 (ціла частина) та formatType == 3 (дробова частина).',
+      });
+    }
+  }
+
+  // 6b. ColumnMultiplicationGenerator Task integration
+  if (relPath.endsWith('ColumnMultiplicationGenerator.java')) {
+    if (!content.includes('toTask(')) {
+      diags.push({
+        id: 'mult-missing-totask',
+        file: relPath,
+        line: findLine(content, 'MultiplicationTask'),
+        severity: 'medium',
+        category: 'architecture',
+        title: 'Відсутній адаптер toTask(String taskId) для MathparRenderer',
+        description:
+          'MultiplicationTask формує лише сирий вираз multColumn(...), без перетворення на модель Task з умовою, кроком тексту та фінальною відповіддю.',
+        suggestion: 'Додайте метод public Task toTask(String taskId) у MultiplicationTask для інтеграції з MathparRenderer.',
       });
     }
   }
